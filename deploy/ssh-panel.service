@@ -1,0 +1,25 @@
+[Unit]
+Description=SSH Panel Backend
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=root
+Group=root
+WorkingDirectory=/opt/ssh-panel/backend
+Environment="PATH=/opt/ssh-panel/venv/bin:/usr/bin:/bin"
+ExecStart=/opt/ssh-panel/venv/bin/gunicorn main:app \
+    -w 2 \
+    -k uvicorn.workers.UvicornWorker \
+    --bind 127.0.0.1:8000 \
+    --timeout 60 \
+    --access-logfile /var/log/ssh-panel/access.log \
+    --error-logfile /var/log/ssh-panel/error.log
+Restart=always
+RestartSec=5
+StandardError=journal
+SyslogIdentifier=ssh-panel
+
+[Install]
+WantedBy=multi-user.target
