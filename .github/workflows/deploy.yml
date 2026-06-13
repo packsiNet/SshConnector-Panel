@@ -1,0 +1,79 @@
+name: Deploy SSH Panel
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan \
+            -p "${{ secrets.SERVER_PORT }}" \
+            "${{ secrets.SERVER_HOST }}" \
+            >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Sync files to server
+        run: |
+          rsync -az --delete \
+            --exclude='.git/' \
+            --exclude='node_modules/' \
+            --exclude='__pycache__/' \
+            --exclude='*.pyc' \
+            --exclude='*.pyo' \
+            --exclude='.env' \
+            --exclude='ssh_panel.db' \
+            --exclude='frontend/dist/' \
+            --exclude='.github/' \
+            -e "ssh -p ${{ secrets.SERVER_PORT }} -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            . \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/ssh-panel/"
+
+      - name: Run deployment script
+        run: |
+          # Base64-encode secrets to safely pass special chars over SSH
+          ADMIN_PASS_B64=$(printf '%s' "${{ secrets.ADMIN_PASSWORD }}" | base64 -w0)
+
+          ssh \
+            -p "${{ secrets.SERVER_PORT }}" \
+            -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
+            "export ADMIN_USERNAME='${{ secrets.ADMIN_USERNAME }}'; \
+             export ADMIN_PASSWORD_B64='${ADMIN_PASS_B64}'; \
+             export APP_URL='${{ secrets.APP_URL }}'; \
+             bash /opt/ssh-panel/deploy/server-deploy.sh"
+
+      - name: Verify deployment
+        run: |
+          sleep 5
+          STATUS=$(ssh \
+            -p "${{ secrets.SERVER_PORT }}" \
+            -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
+            "systemctl is-active ssh-panel 2>&1")
+          echo "Service status: $STATUS"
+          if [ "$STATUS" != "active" ]; then
+            echo "ERROR: Service not running!"
+            ssh \
+              -p "${{ secrets.SERVER_PORT }}" \
+              -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
+              "journalctl -u ssh-panel -n 30 --no-pager"
+            exit 1
+          fi
+          echo "Deployment successful!"

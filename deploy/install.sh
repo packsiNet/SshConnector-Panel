@@ -56,26 +56,39 @@ python3.11 -m venv "$PANEL_DIR/venv"
 log "Generating configuration..."
 SECRET_KEY=$(openssl rand -hex 32)
 
-echo -n "Admin username [admin]: "
-read ADMIN_USER
-ADMIN_USER=${ADMIN_USER:-admin}
+# Non-interactive mode: use env vars ADMIN_USERNAME / ADMIN_PASSWORD
+# Decode base64 password if passed via CI/CD
+if [ -n "$ADMIN_PASSWORD_B64" ]; then
+    ADMIN_PASSWORD=$(echo "$ADMIN_PASSWORD_B64" | base64 -d)
+fi
 
-while true; do
-    echo -n "Admin password: "
-    read -s ADMIN_PASS
-    echo
-    echo -n "Confirm password: "
-    read -s ADMIN_PASS2
-    echo
-    [[ "$ADMIN_PASS" == "$ADMIN_PASS2" ]] && break
-    warn "Passwords do not match. Try again."
-done
+if [ -n "$ADMIN_USERNAME" ] && [ -n "$ADMIN_PASSWORD" ]; then
+    log "Using credentials from environment (non-interactive)"
+    ADMIN_USER="$ADMIN_USERNAME"
+    ADMIN_PASS="$ADMIN_PASSWORD"
+else
+    echo -n "Admin username [admin]: "
+    read ADMIN_USER
+    ADMIN_USER=${ADMIN_USER:-admin}
+
+    while true; do
+        echo -n "Admin password: "
+        read -s ADMIN_PASS
+        echo
+        echo -n "Confirm password: "
+        read -s ADMIN_PASS2
+        echo
+        [[ "$ADMIN_PASS" == "$ADMIN_PASS2" ]] && break
+        warn "Passwords do not match. Try again."
+    done
+fi
 
 ADMIN_HASH=$("$PANEL_DIR/venv/bin/python3" -c "
 from passlib.context import CryptContext
 ctx = CryptContext(schemes=['bcrypt'], deprecated='auto')
-print(ctx.hash('$ADMIN_PASS'))
-")
+import sys
+print(ctx.hash(sys.argv[1]))
+" "$ADMIN_PASS")
 
 cat > "$PANEL_DIR/backend/.env" <<EOF
 SECRET_KEY=$SECRET_KEY
